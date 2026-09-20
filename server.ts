@@ -8,7 +8,7 @@ import { createServer as createViteServer } from 'vite';
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 // Body parsers
 app.use(express.json({ limit: '15mb' }));
@@ -157,9 +157,16 @@ function normalizeIndicNameToEnglish(input: string): string {
   const cleanInput = input.replace(/\s+/g, ' ').trim();
   const knownNames: Record<string, string> = {
     'सृजन': 'Srijan',
+    'सुजन': 'Srijan',
     'श्रीजन': 'Srijan',
+    'सृजन केशरी': 'Srijan Keshri',
+    'सुजन केशरी': 'Srijan Keshri',
+    'सृजन केसरी': 'Srijan Keshri',
+    'सुजन केसरी': 'Srijan Keshri',
     'हर्ष': 'Harsh',
+    'हर्ष कुमार': 'Harsh Kumar',
     'स्वस्तिका': 'Swastika',
+    'स्वस्तिका चौबे': 'Swastika Chaubey',
     'राहुल शर्मा': 'Rahul Sharma',
     'अमोल पाटील': 'Amol Patil',
     'অনিরুদ্ধ সেন': 'Aniruddha Sen',
@@ -170,7 +177,53 @@ function normalizeIndicNameToEnglish(input: string): string {
     'ಸುರೇಶ್ ಗೌಡ': 'Suresh Gowda'
   };
 
-  return knownNames[cleanInput] || cleanInput;
+  if (knownNames[cleanInput]) return knownNames[cleanInput];
+
+  if (/^[\u0900-\u097F\s]+$/.test(cleanInput)) {
+    const independentVowels: Record<string, string> = {
+      'अ': 'a', 'आ': 'aa', 'इ': 'i', 'ई': 'ee', 'उ': 'u', 'ऊ': 'oo', 'ऋ': 'ri',
+      'ए': 'e', 'ऐ': 'ai', 'ओ': 'o', 'औ': 'au'
+    };
+    const consonants: Record<string, string> = {
+      'क': 'k', 'ख': 'kh', 'ग': 'g', 'घ': 'gh', 'च': 'ch', 'छ': 'chh', 'ज': 'j', 'झ': 'jh',
+      'ट': 't', 'ठ': 'th', 'ड': 'd', 'ढ': 'dh', 'ण': 'n', 'त': 't', 'थ': 'th', 'द': 'd', 'ध': 'dh',
+      'न': 'n', 'प': 'p', 'फ': 'ph', 'ब': 'b', 'भ': 'bh', 'म': 'm', 'य': 'y', 'र': 'r',
+      'ल': 'l', 'व': 'v', 'श': 'sh', 'ष': 'sh', 'स': 's', 'ह': 'h', 'ळ': 'l'
+    };
+    const vowelSigns: Record<string, string> = {
+      'ा': 'a', 'ि': 'i', 'ी': 'ee', 'ु': 'u', 'ू': 'oo', 'ृ': 'ri',
+      'े': 'e', 'ै': 'ai', 'ो': 'o', 'ौ': 'au'
+    };
+
+    const words = cleanInput.split(/\s+/).map((word) => {
+      let output = '';
+      for (let i = 0; i < word.length; i += 1) {
+        const char = word[i];
+        const next = word[i + 1];
+        if (consonants[char]) {
+          output += consonants[char];
+          if (next === '्') {
+            i += 1;
+          } else if (vowelSigns[next]) {
+            output += vowelSigns[next];
+            i += 1;
+          } else {
+            output += 'a';
+          }
+        } else if (independentVowels[char]) {
+          output += independentVowels[char];
+        } else if (char === 'ं' || char === 'ँ') {
+          output += 'n';
+        }
+      }
+
+      return output ? output.charAt(0).toUpperCase() + output.slice(1) : word;
+    });
+
+    return words.join(' ');
+  }
+
+  return cleanInput;
 }
 
 // ==========================================
@@ -702,8 +755,10 @@ app.post('/api/extract', async (req, res) => {
     const cleaned: ExtractedDataResult = { ...data };
 
     if (heuristic.name && !isLikelyBadName(heuristic.name)) {
-      if (!cleaned.name || isLikelyBadName(cleaned.name) || isIndicOnlyName(cleaned.name)) {
-        cleaned.name = normalizeIndicNameToEnglish(heuristic.name);
+      const normalizedHeuristicName = normalizeIndicNameToEnglish(heuristic.name);
+      const hasAuthoritativeNameMapping = normalizedHeuristicName !== heuristic.name;
+      if (hasAuthoritativeNameMapping || !cleaned.name || isLikelyBadName(cleaned.name) || isIndicOnlyName(cleaned.name)) {
+        cleaned.name = normalizedHeuristicName;
       }
     } else if (isLikelyBadName(cleaned.name)) {
       cleaned.name = null;
