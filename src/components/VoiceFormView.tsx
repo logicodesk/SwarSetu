@@ -227,8 +227,8 @@ export const VoiceFormView: React.FC<VoiceFormViewProps> = ({
         }
       }
     } catch (err: any) {
-      console.warn('Microphone access unavailable or denied. Switching to simulation mode:', err);
-      handleSimulateVoiceSample(language, true);
+      console.warn('Microphone access unavailable or denied:', err);
+      setPipelineStatus('idle');
     }
   };
 
@@ -269,9 +269,13 @@ export const VoiceFormView: React.FC<VoiceFormViewProps> = ({
     } else {
       // If mic was not active or already stopped
       isStoppingRecordingRef.current = false;
-      const textToProcess = transcript.trim() || SUPPORTED_LANGUAGES[language]?.sampleTranscript || '';
-      console.log('[VoiceFormView] MediaRecorder was inactive; routing directly to extraction with:', textToProcess);
-      processTranscript(textToProcess);
+      const textToProcess = transcript.trim();
+      if (textToProcess) {
+        console.log('[VoiceFormView] Routing directly to extraction with:', textToProcess);
+        processTranscript(textToProcess);
+      } else {
+        setPipelineStatus('idle');
+      }
     }
   };
 
@@ -296,10 +300,7 @@ export const VoiceFormView: React.FC<VoiceFormViewProps> = ({
     const hasUsableLiveTranscript = finalTranscript.replace(/\s+/g, '').length >= 12;
     const hasNameCue = /(?:name|नाम|नाव|নাম|பெயர்|పేరు|નામ|ಹೆಸರು|my name|मेरा नाम|என் பெயர்|నా పేరు)/i.test(finalTranscript);
 
-    if (hasUsableLiveTranscript && hasNameCue) {
-      console.log('Using live browser transcript because it already contains a name cue:', finalTranscript);
-      setLatencyMs(120);
-    } else if (audioBlob.size > 0) {
+    if (audioBlob.size > 0) {
       try {
         console.log(`Sending ${audioBlob.size} bytes to POST /api/transcribe...`);
         const startTime = performance.now();
@@ -327,8 +328,8 @@ export const VoiceFormView: React.FC<VoiceFormViewProps> = ({
         });
 
         if (transResult.transcript && transResult.transcript.trim()) {
-          // If we had no live transcript, or if backend returned a non-demo transcript, use backend result
-          if (!finalTranscript || !transResult.isDemo) {
+          // If we have a genuine neural ASR transcription or no live transcript, adopt it
+          if (!transResult.isDemo || !finalTranscript) {
             console.log(
               `Adopting backend transcription output: was="${finalTranscript}", now="${transResult.transcript.trim()}"`
             );
@@ -346,8 +347,11 @@ export const VoiceFormView: React.FC<VoiceFormViewProps> = ({
       } catch (err) {
         console.error('❌ /api/transcribe network error, proceeding with fallback:', err);
       }
+    } else if (hasUsableLiveTranscript) {
+      console.log('Using live browser transcript because no audio blob was captured:', finalTranscript);
+      setLatencyMs(120);
     } else {
-      console.warn('⚠️ Audio Blob has 0 bytes; skipping backend transcription call.');
+      console.warn('⚠️ Audio Blob has 0 bytes and no live transcript.');
     }
 
     if (currentReqId !== requestIdRef.current) {
@@ -463,26 +467,28 @@ export const VoiceFormView: React.FC<VoiceFormViewProps> = ({
           };
 
           // Field: name
-          if (incoming.name !== null && incoming.name !== undefined && String(incoming.name).trim() !== '') {
-            const val = String(incoming.name).trim();
+          const incomingName = incoming.name ?? (incoming as any).fullName ?? null;
+          if (incomingName !== null && incomingName !== undefined && String(incomingName).trim() !== '') {
+            const val = String(incomingName).trim();
             if (!isLikelyBadName(val)) {
               audit.name = { status: 'UPDATED', oldVal: prev.name, newVal: val };
               next.name = val;
             } else {
-              audit.name = { status: 'SKIPPED (looks like transcript)', oldVal: prev.name, newVal: incoming.name };
+              audit.name = { status: 'SKIPPED (looks like transcript)', oldVal: prev.name, newVal: incomingName };
             }
           } else {
             audit.name = { status: 'SKIPPED (null/empty)', oldVal: prev.name, newVal: prev.name };
           }
 
           // Field: nameIndic
-          if (incoming.nameIndic !== null && incoming.nameIndic !== undefined && String(incoming.nameIndic).trim() !== '') {
-            const val = String(incoming.nameIndic).trim();
+          const incomingNameIndic = incoming.nameIndic ?? (incoming as any).name_indic ?? (incoming as any).name_native ?? null;
+          if (incomingNameIndic !== null && incomingNameIndic !== undefined && String(incomingNameIndic).trim() !== '') {
+            const val = String(incomingNameIndic).trim();
             if (!isLikelyBadName(val)) {
               audit.nameIndic = { status: 'UPDATED', oldVal: prev.nameIndic, newVal: val };
               next.nameIndic = val;
             } else {
-              audit.nameIndic = { status: 'SKIPPED (looks like transcript)', oldVal: prev.nameIndic, newVal: incoming.nameIndic };
+              audit.nameIndic = { status: 'SKIPPED (looks like transcript)', oldVal: prev.nameIndic, newVal: incomingNameIndic };
             }
           } else {
             audit.nameIndic = { status: 'SKIPPED (null/empty)', oldVal: prev.nameIndic, newVal: prev.nameIndic };

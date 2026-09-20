@@ -60,10 +60,10 @@ export const SUPPORTED_LANGUAGES: Record<IndicLanguageCode, IndicLanguageConfig>
     conformerModel: 'IndicConformer-v2-en',
     samplePrompt: 'Speak your details in English or Hinglish...',
     sampleTranscript:
-      'My name is Priya Mehta. My age is 26 years old. I reside in Bengaluru, Karnataka. My phone number is 9880123456.',
+      'My name is Priya Mehta. I am female. My age is 26 years old. I reside in Bengaluru, Karnataka. My phone number is 9880123456.',
     sampleData: {
       name: 'Priya Mehta',
-      nameIndic: null,
+      nameIndic: 'प्रिया मेहता',
       age: 26,
       gender: 'female',
       phone: '9880123456',

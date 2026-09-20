@@ -27,7 +27,8 @@ const SARVAM_TIMEOUT_MS = 4500;
 const GEMINI_AUDIO_TIMEOUT_MS = 7000;
 const GEMINI_TEXT_TIMEOUT_MS = 5500;
 
-let sarvamAuthDisabled = false;
+let sarvamAuthDisabledUntil = 0; // timestamp (ms) – retry Sarvam after this time
+const SARVAM_AUTH_RETRY_MS = 60_000; // retry Sarvam 60s after an auth failure
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
   return Promise.race([
@@ -174,7 +175,26 @@ function normalizeIndicNameToEnglish(input: string): string {
     'வெங்கடேஷ்': 'Venkatesh',
     'వెంకటేష్': 'Venkatesh',
     'હિતેશ પટેલ': 'Hitesh Patel',
-    'ಸುರೇಶ್ ಗೌಡ': 'Suresh Gowda'
+    'ಸುರೇಶ್ ಗೌಡ': 'Suresh Gowda',
+    // Female names
+    'नेहा': 'Neha',
+    'नेहा गुप्ता': 'Neha Gupta',
+    'प्रिया': 'Priya',
+    'प्रिया मेहता': 'Priya Mehta',
+    'अनिता': 'Anita',
+    'अनिता कुमारी': 'Anita Kumari',
+    'सुनीता': 'Sunita',
+    'सुनीता देवी': 'Sunita Devi',
+    'पूजा': 'Pooja',
+    'पूजा शर्मा': 'Pooja Sharma',
+    'রীমা দাস': 'Reema Das',
+    'সুপ্রিয়া সেন': 'Supriya Sen',
+    'లక్ష్మి': 'Lakshmi',
+    'ప్రియాంక': 'Priyanka',
+    'ગીતા પટેલ': 'Geeta Patel',
+    'ಸುಮಿತ್ರಾ': 'Sumitra',
+    'அனிதா': 'Anitha',
+    'பிரியா': 'Priya'
   };
 
   if (knownNames[cleanInput]) return knownNames[cleanInput];
@@ -255,11 +275,11 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
   const language = (req.body.language as string) || 'auto';
   const file = req.file;
 
-  // Fallback demo transcripts by language
+  // Fallback demo transcripts by language (mix of male and female personas)
   const defaultTranscripts: Record<string, string> = {
-    'auto': 'मेरा नाम राहुल शर्मा है। मेरी उम्र बाईस साल है। मैं ग्वालियर मध्य प्रदेश में रहता हूँ। मेरा फोन नंबर 9876543210 है।',
-    'hi-IN': 'मेरा नाम राहुल शर्मा है। मेरी उम्र बाईस साल है। मैं ग्वालियर मध्य प्रदेश में रहता हूँ। मेरा फोन नंबर 9876543210 है।',
-    'en-IN': 'My name is Priya Mehta. My age is 26 years old. I reside in Bengaluru, Karnataka. My phone number is 9880123456.',
+    'auto': 'मेरा नाम नेहा गुप्ता है। मेरी उम्र चौबीस साल है। मैं इंदौर मध्य प्रदेश में रहती हूँ। मेरा फोन नंबर 9876501234 है। मैं स्टूडेंट हूँ।',
+    'hi-IN': 'मेरा नाम स्वस्तिका चौबे है। मेरी उम्र तेईस साल है। मैं ग्वालियर मध्य प्रदेश में रहती हूँ। मेरा फोन नंबर 9876543210 है।',
+    'en-IN': 'My name is Priya Mehta. I am female. My age is 26 years old. I reside in Bengaluru, Karnataka. My phone number is 9880123456.',
     'mr-IN': 'माझे नाव अमोल पाटील आहे. माझे वय ब्याचाळीस वर्षे आहे. मी पुणे महाराष्ट्र येथे राहतो. माझा मोबाईल नंबर 9822334455 आहे. मी शेतकरी आहे.',
     'bn-IN': 'আমার নাম অনিরুদ্ধ সেন। আমার বয়স ঊনত্রিশ বছর। আমি কলকাতা পশ্চিমবঙ্গে থাকি। আমার ফোন নম্বর 9830112233।',
     'ta-IN': 'என் பெயர் கார்த்திக். எனக்கு வயது முப்பத்து நான்கு. நான் சென்னை தமிழ்நாட்டில் வசிக்கிறேன். என் அலைபேசி எண் 9444123456.',
@@ -293,7 +313,7 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
   }
 
   // 1. Attempt Sarvam AI STT (saaras:v3)
-  if (process.env.SARVAM_API_KEY && !sarvamAuthDisabled && file && file.buffer.length >= 300) {
+  if (process.env.SARVAM_API_KEY && Date.now() > sarvamAuthDisabledUntil && file && file.buffer.length >= 300) {
     const langAttempts = language === 'auto' ? ['unknown'] : [language, 'unknown'];
 
     for (const targetLangCode of langAttempts) {
@@ -339,8 +359,8 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
           const errBody = await response.text();
           console.warn(`[Sarvam STT] Response error status ${response.status}:`, errBody);
           if (response.status === 401 || response.status === 403) {
-            sarvamAuthDisabled = true;
-            console.warn('[Sarvam STT] Disabling Sarvam attempts for this server session because authentication failed.');
+            sarvamAuthDisabledUntil = Date.now() + SARVAM_AUTH_RETRY_MS;
+            console.warn(`[Sarvam STT] Pausing Sarvam attempts for ${SARVAM_AUTH_RETRY_MS / 1000}s due to auth failure.`);
             break;
           }
         }
@@ -348,8 +368,8 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
         console.warn(`[Sarvam STT] Call threw exception:`, sarvamErr);
       }
     }
-  } else if (sarvamAuthDisabled) {
-    console.warn('[Sarvam STT] Skipped because Sarvam authentication failed earlier in this server session.');
+  } else if (Date.now() <= sarvamAuthDisabledUntil) {
+    console.warn(`[Sarvam STT] Skipped — cooling down after auth failure (retries in ${Math.ceil((sarvamAuthDisabledUntil - Date.now()) / 1000)}s).`);
   }
 
   // 2. Cascade Fallback to Gemini Multimodal Audio
@@ -490,10 +510,11 @@ app.post('/api/extract', async (req, res) => {
         .replace(/\s+/g, ' ')
         .trim();
     const extractExplicitName = (source: string): { name: string | null; nameIndic: string | null } => {
-      const stopWords = '(?:my|i|मैं|मेरी|मेरा|माझे|আমার|என்|எனக்கு|నా|મારી|ನನ್ನ|age|उम्र|वय|বয়স|வயது|వయస్సు|ઉંમર|ವಯಸ್ಸು|gender|जेंडर|लिंग|phone|mobile|number|मोबाइल|फोन|नंबर|address|पता|रहता|रहती|live|living|from|occupation|student|स्टूडेंट|और|and|$)';
+      const stopWords = '(?:my|i|मैं|मेरी|मेरा|माझे|আমার|என்|எனக்கு|నా|મારી|ನನ್ನ|age|उम्र|वय|বয়স|வயது|వయస్సు|ઉંમર|ವಯಸ್ಸು|gender|जेंडर|लिंग|phone|mobile|number|मोबाइल|फोन|नंबर|address|पता|रहता|रहती|live|living|from|occupation|student|स्टूडेंट|और|and|is|am)';
       const patterns = [
-        new RegExp(`(?:मेरा नाम|मेरी नाम|माझे नाव|আমার নাম|என் பெயர்|எனது பெயர்|నా పేరు|મારું નામ|મારુ નામ|ನನ್ನ ಹೆಸರು)\\s*(?:है|आहे|হলো|என்பது|అని|છે|ಅದು|is)?\\s*([^.,।!?\\d]+?)(?=\\s+${stopWords}|\\s+\\d|[.,।!?]|$)`, 'i'),
-        new RegExp(`(?:my name is|name is|name)\\s*([^.,।!?\\d]+?)(?=\\s+${stopWords}|\\s+\\d|[.,।!?]|$)`, 'i')
+        new RegExp(`(?:मेरा नाम|मेरी नाम|माझे नाव|আমার নাম|என் பெயர்|எனது பெயர்|నా పేరు|મારું નામ|મારુ નામ|ನನ್ನ ಹೆಸರು)\\s*(?:है|आहे|হলো|என்பது|అని|છે|ಅದು|is)?\\s*([^.,।!?\\d]+?)(?=\\s+${stopWords}\\b|\\s+\\d|[.,।!?]|$)`, 'i'),
+        new RegExp(`(?:my name is|my name|name is|name)\\s*(?:is|:)?\\s*([^.,।!?\\d]+?)(?=\\s+${stopWords}\\b|\\s+\\d|[.,।!?]|$)`, 'i'),
+        new RegExp(`(?:i am|i'm)\\s+([^.,।!?\\d]+?)(?=\\s+(?:and|a|an|female|male|student|living|from|years?|my|phone|mobile|age|staying)\\b|\\s+\\d|[.,।!?]|$)`, 'i')
       ];
 
       for (const pattern of patterns) {
@@ -501,7 +522,7 @@ app.post('/api/extract', async (req, res) => {
         if (match) {
           const value = cleanupValue(match[1]);
           const tokenCount = value.split(/\s+/).filter(Boolean).length;
-          if (value && tokenCount <= 4 && !/(?:age|phone|mobile|number|gender|address|occupation|student|मैं|i|उम्र|मोबाइल|नंबर|जेंडर|पता)/i.test(value)) {
+          if (value && tokenCount >= 1 && tokenCount <= 4 && !/(?:age|phone|mobile|number|gender|address|occupation|student|farmer|engineer|मैं|i|उम्र|मोबाइल|नंबर|जेंडर|पता|रहता|रहती)/i.test(value)) {
             return {
               name: value,
               nameIndic: /^[\u0900-\u097F\u0980-\u09FF\u0A80-\u0AFF\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF\s]+$/.test(value) ? value : null
@@ -676,57 +697,31 @@ app.post('/api/extract', async (req, res) => {
 
     // Extract Names & Address based on typical vernacular patterns
     if (name) {
-      // Explicit name phrase already captured above.
-    } else if (normalizedText.includes('राहुल') || normalizedText.includes('Rahul')) {
-      name = 'Rahul Sharma';
-      nameIndic = 'राहुल शर्मा';
-      address = address || ((normalizedText.includes('मध्य प्रदेश') || normalizedText.includes('Madhya Pradesh')) ? 'Gwalior, Madhya Pradesh' : 'Gwalior');
-      occupation = occupation || ((normalizedText.includes('छात्र') || normalizedText.includes('student') || normalizedText.includes('freelancer')) ? 'Student / Freelancer' : null);
-    } else if (normalizedText.includes('अमोल') || normalizedText.includes('Amol')) {
-      name = 'Amol Patil';
-      nameIndic = 'अमोल पाटील';
-      address = address || 'Pune, Maharashtra';
-      occupation = occupation || 'Farmer (शेतकरी)';
-      gender = 'male';
-    } else if (normalizedText.includes('অনিরুদ্ধ') || normalizedText.includes('Aniruddha')) {
-      name = 'Aniruddha Sen';
-      nameIndic = 'অনিরুদ্ধ সেন';
-      address = address || 'Kolkata, West Bengal';
-      occupation = occupation || 'Software Designer';
-      gender = 'male';
-    } else if (normalizedText.includes('கார்த்திக்') || normalizedText.includes('Karthik')) {
-      name = 'Karthik Raman';
-      nameIndic = 'கார்த்திக்';
-      address = address || 'Chennai, Tamil Nadu';
-      occupation = occupation || 'Merchant / Trader';
-      gender = 'male';
-    } else if (normalizedText.includes('వెంకటేష్') || normalizedText.includes('Venkatesh')) {
-      name = 'Venkatesh Rao';
-      nameIndic = 'వెంకటేష్';
-      address = address || 'Vijayawada, Andhra Pradesh';
-      occupation = occupation || 'Agricultural Supervisor';
-      gender = 'male';
-      age = 32;
-    } else if (normalizedText.includes('હિતેશ') || normalizedText.includes('Hitesh')) {
-      name = 'Hitesh Patel';
-      nameIndic = 'હિતેશ પટેલ';
-      address = address || 'Ahmedabad, Gujarat';
-      occupation = occupation || null;
-      gender = gender || 'male';
-    } else if (normalizedText.includes('ಸುರೇಶ್') || normalizedText.includes('Suresh')) {
-      name = 'Suresh Gowda';
-      nameIndic = 'ಸುರೇಶ್ ಗೌಡ';
-      address = address || 'Mysuru, Karnataka';
-      occupation = occupation || null;
-      gender = gender || 'male';
+      // Explicit name phrase already captured above — transliterate if Indic
+      const transliterated = normalizeIndicNameToEnglish(name);
+      if (transliterated !== name) {
+        nameIndic = nameIndic || name;
+        name = transliterated;
+      }
     } else {
-      // General name match
-      const nameMatch = searchableText.match(/(?:नाम|नाव|নাম|பெயர்|పేరు|name)\s*(?:is|है|आहे|হলো)?\s*([^.,।]+?)(?=[.,।\s]+(?:मेरी|माझे|আমার|என்|నా|my|उम्र|वय|age|phone|mobile|gender|address|and|और|$))/i);
+      // General name match as fallback
+      const nameMatch = searchableText.match(/(?:नाम|नाव|নাম|பெயர்|పేరు|name)\s*(?:is|है|आहे|হলো|:)?\s*([^.,।!?\d]+?)(?=[.,।!?\s]+(?:मेरी|माझे|আমার|என்|నా|my|उम्र|वय|age|phone|mobile|gender|address|and|और|\s*$))/i);
       if (nameMatch) {
-        name = cleanupValue(nameMatch[1]);
-        if (/^[\u0900-\u097F\u0980-\u09FF\u0A80-\u0AFF\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF\s]+$/.test(name)) {
-          nameIndic = name;
+        const rawName = cleanupValue(nameMatch[1]);
+        if (rawName && rawName.length <= 45 && !/(?:age|phone|mobile|number|gender|address|occupation|student|farmer|engineer|उम्र|साल|मोबाइल|फोन|नंबर|जेंडर|लिंग|पता|रहता|रहती)/i.test(rawName)) {
+          if (/^[\u0900-\u097F\u0980-\u09FF\u0A80-\u0AFF\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF\s]+$/.test(rawName)) {
+            nameIndic = rawName;
+          }
+          const transliterated = normalizeIndicNameToEnglish(rawName);
+          name = transliterated !== rawName ? transliterated : rawName;
         }
+      }
+    }
+
+    // Detect female gender from Hindi/Marathi feminine verb forms if gender not yet set
+    if (!gender) {
+      if (searchableText.match(/\b(?:रहती हूँ|रहती हूं|रहती|मैं\s+.*\s+हूँ.*महिला|I am female|i am a woman|gender\s*(?:is\s*)?female|female|महिला|स्त्री|woman|பெண்|మహిళ)\b/i)) {
+        gender = 'female';
       }
     }
 
@@ -740,7 +735,7 @@ app.post('/api/extract', async (req, res) => {
     const wordCount = candidate.split(/\s+/).length;
     const hasDigits = /\d/.test(candidate);
     const hasSentencePunctuation = /[.,।!?]/.test(candidate);
-    const hasFieldWords = /(?:age|years?|phone|mobile|number|gender|address|occupation|student|farmer|engineer|उम्र|साल|मोबाइल|फोन|नंबर|जेंडर|लिंग|पता|रहता|रहती|स्टूडेंट|வயது|தொலைபேசி|மாணவன்|వయస్సు|ఫోన్|ವಯಸ್ಸು|દૂરવಾಣಿ)/i.test(candidate);
+    const hasFieldWords = /(?:age|years?|phone|mobile|number|gender|address|occupation|student|farmer|engineer|उम्र|साल|मोबाइल|फोन|नंबर|जेंडर|लिंग|पता|रहता|रहती|स्टूडेंट|वयது|தொலைபேசி|மாணவன்|వయస్సు|ఫోన్|ವಯಸ್ಸು|દૂરવાણી)/i.test(candidate);
     return candidate.length > 45 || wordCount > 5 || hasDigits || hasSentencePunctuation || hasFieldWords;
   };
 
@@ -754,20 +749,28 @@ app.post('/api/extract', async (req, res) => {
     const heuristic = heuristicExtraction(sourceText);
     const cleaned: ExtractedDataResult = { ...data };
 
-    if (heuristic.name && !isLikelyBadName(heuristic.name)) {
-      const normalizedHeuristicName = normalizeIndicNameToEnglish(heuristic.name);
-      const hasAuthoritativeNameMapping = normalizedHeuristicName !== heuristic.name;
-      if (hasAuthoritativeNameMapping || !cleaned.name || isLikelyBadName(cleaned.name) || isIndicOnlyName(cleaned.name)) {
-        cleaned.name = normalizedHeuristicName;
-      }
-    } else if (isLikelyBadName(cleaned.name)) {
-      cleaned.name = null;
+    // If LLM returned an Indic-only name, transliterate it to Latin and populate nameIndic
+    if (cleaned.name && isIndicOnlyName(cleaned.name)) {
+      if (!cleaned.nameIndic) cleaned.nameIndic = cleaned.name;
+      cleaned.name = normalizeIndicNameToEnglish(cleaned.name);
     }
 
-    if (heuristic.nameIndic && !isLikelyBadName(heuristic.nameIndic)) {
-      cleaned.nameIndic = heuristic.nameIndic;
-    } else if (isLikelyBadName(cleaned.nameIndic)) {
-      cleaned.nameIndic = null;
+    // If LLM name is missing or corrupted, use heuristic name
+    if (!cleaned.name || isLikelyBadName(cleaned.name)) {
+      if (heuristic.name && !isLikelyBadName(heuristic.name)) {
+        cleaned.name = normalizeIndicNameToEnglish(heuristic.name);
+      } else {
+        cleaned.name = null;
+      }
+    }
+
+    // Ensure nameIndic is set if available
+    if (!cleaned.nameIndic || isLikelyBadName(cleaned.nameIndic)) {
+      if (heuristic.nameIndic && !isLikelyBadName(heuristic.nameIndic)) {
+        cleaned.nameIndic = heuristic.nameIndic;
+      } else {
+        cleaned.nameIndic = null;
+      }
     }
 
     if (cleaned.age === null || cleaned.age === undefined || Number.isNaN(Number(cleaned.age))) {
@@ -834,7 +837,18 @@ CRITICAL RULES:
         const rawText = response.text?.trim();
         if (rawText) {
           const cleanedText = rawText.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
-          const parsed = sanitizeExtraction(JSON.parse(cleanedText) as ExtractedDataResult, transcript);
+          const rawJson = JSON.parse(cleanedText) as Record<string, any>;
+          const normalizedJson: ExtractedDataResult = {
+            name: rawJson.name ? String(rawJson.name).trim() : null,
+            nameIndic: rawJson.nameIndic || rawJson.name_indic || rawJson.nameIndicScript || rawJson.name_native || null,
+            age: typeof rawJson.age === 'number' ? rawJson.age : (rawJson.age ? parseInt(String(rawJson.age), 10) : null),
+            gender: rawJson.gender ? (String(rawJson.gender).toLowerCase().trim() as any) : null,
+            phone: rawJson.phone || rawJson.mobile || rawJson.mobile_number || rawJson.phoneNumber || null,
+            email: rawJson.email || null,
+            address: rawJson.address || rawJson.city || rawJson.residence || null,
+            occupation: rawJson.occupation || rawJson.profession || rawJson.job || null
+          };
+          const parsed = sanitizeExtraction(normalizedJson, transcript);
 
           // Count detected fields
           const requiredKeys: (keyof ExtractedDataResult)[] = ['name', 'age', 'gender', 'phone', 'address'];

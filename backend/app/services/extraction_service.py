@@ -23,10 +23,11 @@ def heuristic_extract(text: str) -> ExtractedData:
     if email_match:
         email = email_match.group(0)
 
-    if re.search(r'पुरुष|male|ஆண்', text, re.IGNORECASE):
-        gender = "male"
-    elif re.search(r'महिला|female|பெண்', text, re.IGNORECASE):
+    # Gender detection
+    if re.search(r'महिला|female|பெண்|மகள்|स्त्री|औरत|woman|रहती हूँ|रहती हूं|रहती', text, re.IGNORECASE):
         gender = "female"
+    elif re.search(r'पुरुष|male|ஆண்|పురుషుడు|man|mard|रहता हूँ|रहता हूं', text, re.IGNORECASE):
+        gender = "male"
     elif re.search(r'अन्य|other', text, re.IGNORECASE):
         gender = "other"
 
@@ -36,6 +37,12 @@ def heuristic_extract(text: str) -> ExtractedData:
         age = int(age_match.group(1))
     elif "बाईस" in text or "बावीस" in text or "twenty two" in text.lower():
         age = 22
+    elif "तेईस" in text or "twenty three" in text.lower():
+        age = 23
+    elif "चौबीस" in text or "twenty four" in text.lower():
+        age = 24
+    elif "छब्बीस" in text or "twenty six" in text.lower():
+        age = 26
     elif "ब्याचाळीस" in text or "४२" in text:
         age = 42
     elif "ঊনত্রিশ" in text or "২৯" in text:
@@ -43,29 +50,28 @@ def heuristic_extract(text: str) -> ExtractedData:
     elif "முப்பத்து நான்கு" in text or "34" in text:
         age = 34
 
-    if "राहुल" in text or "Rahul" in text:
-        name = "Rahul Sharma"
-        name_indic = "राहुल शर्मा"
+    # Extract explicit name
+    name_match = re.search(r'(?:मेरा नाम|मेरी नाम|माझे नाव|আমার নাম|என் பெயர்|నా పేరు|my name is|my name|name is|i am)\s*([A-Za-z\u0900-\u097F\u0980-\u09FF\u0A80-\u0AFF\u0B80-\u0BFF\u0C00-\u0C7F\s]{2,30}?)(?=[.,।!?\s]+(?:है|is|and|aur|उम्र|वय|age|phone|mobile|gender|रहता|रहती|live|from|$))', text, re.IGNORECASE)
+    if name_match:
+        raw_name = name_match.group(1).strip()
+        if not re.search(r'age|phone|mobile|number|gender|address|student|उम्र|मोबाइल|जेंडर', raw_name, re.IGNORECASE):
+            name = raw_name
+            if re.search(r'^[\u0900-\u097F\u0980-\u09FF\u0A80-\u0AFF\u0B80-\u0BFF\u0C00-\u0C7F\s]+$', raw_name):
+                name_indic = raw_name
+
+    # Address / city
+    if re.search(r'ग्वालियर|Gwalior', text, re.IGNORECASE):
         address = "Gwalior, Madhya Pradesh"
-        occupation = "Student / Freelancer"
-    elif "अमोल" in text or "Amol" in text:
-        name = "Amol Patil"
-        name_indic = "अमोल पाटील"
+    elif re.search(r'इंदौर|Indore', text, re.IGNORECASE):
+        address = "Indore, Madhya Pradesh"
+    elif re.search(r'पुणे|Pune', text, re.IGNORECASE):
         address = "Pune, Maharashtra"
-        occupation = "Farmer (शेतकरी)"
-        gender = "male"
-    elif "অনিরুদ্ধ" in text or "Aniruddha" in text:
-        name = "Aniruddha Sen"
-        name_indic = "অনিরুদ্ধ সেন"
+    elif re.search(r'कोलकाता|Kolkata', text, re.IGNORECASE):
         address = "Kolkata, West Bengal"
-        occupation = "Software Designer"
-        gender = "male"
-    elif "கார்த்திக்" in text or "Karthik" in text:
-        name = "Karthik Raman"
-        name_indic = "கார்த்திக்"
+    elif re.search(r'சென்னை|Chennai', text, re.IGNORECASE):
         address = "Chennai, Tamil Nadu"
-        occupation = "Merchant / Trader"
-        gender = "male"
+    elif re.search(r'Bengaluru|Bangalore|ಬೆಂಗಳೂರು', text, re.IGNORECASE):
+        address = "Bengaluru, Karnataka"
 
     return ExtractedData(
         name=name,

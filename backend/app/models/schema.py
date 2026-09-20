@@ -19,13 +19,16 @@ class ExtractionRequest(BaseModel):
 
 class ExtractedData(BaseModel):
     name: Optional[str] = None
-    name_indic: Optional[str] = None
+    name_indic: Optional[str] = Field(default=None, alias="nameIndic", serialization_alias="nameIndic")
     age: Optional[int] = None
     gender: Optional[Literal["male", "female", "other"]] = None
     phone: Optional[str] = None
     email: Optional[str] = None
     address: Optional[str] = None
     occupation: Optional[str] = None
+
+    class Config:
+        populate_by_name = True
 
 class ExtractionResponse(BaseModel):
     success: bool
