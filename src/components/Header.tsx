@@ -157,12 +157,6 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Right Tools & CTA */}
         <div className="flex items-center gap-2 sm:gap-3">
-          {/* Live System Status */}
-          <div className="hidden md:flex items-center gap-2 px-3 py-1 bg-tertiary-fixed text-on-tertiary-fixed rounded-full font-mono text-[11px] font-semibold">
-            <span className="w-2 h-2 rounded-full bg-tertiary-container animate-pulse"></span>
-            <span>System Ready (Hindi, Marathi, Bengali, Tamil)</span>
-          </div>
-
           {/* Dark / Light Toggle */}
           <button
             onClick={toggleTheme}

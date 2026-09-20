@@ -357,8 +357,13 @@ export const VoiceFormView: React.FC<VoiceFormViewProps> = ({
     }
 
     if (!finalTranscript) {
-      finalTranscript = transcript.trim() || SUPPORTED_LANGUAGES[language]?.sampleTranscript || '';
-      console.log('No spoken audio detected; using default language sample transcript:', finalTranscript);
+      finalTranscript = transcript.trim();
+      if (!finalTranscript) {
+        console.warn('No spoken audio transcript resolved. Leaving form unchanged instead of using demo sample data.');
+        setPipelineStatus('form_ready');
+        console.groupEnd();
+        return;
+      }
     }
 
     console.log(`✅ Final resolved transcript for Step 3: "${finalTranscript}"`);
@@ -446,12 +451,26 @@ export const VoiceFormView: React.FC<VoiceFormViewProps> = ({
           console.log('Current form state (BEFORE merge):', { ...prev });
           const next: ExtractedFormData = { ...prev };
           const audit: Record<string, { status: string; oldVal: any; newVal: any }> = {};
+          const isLikelyBadName = (value: string) => {
+            const wordCount = value.trim().split(/\s+/).filter(Boolean).length;
+            return (
+              value.length > 45 ||
+              wordCount > 5 ||
+              /\d/.test(value) ||
+              /[.,।!?]/.test(value) ||
+              /(?:age|years?|phone|mobile|number|gender|address|occupation|student|farmer|engineer|उम्र|साल|मोबाइल|फोन|नंबर|जेंडर|लिंग|पता|रहता|रहती|स्टूडेंट|வயது|தொலைபேசி|மாணவன்|వయస్సు|ఫోన్|ವಯಸ್ಸು|દૂરવાણી)/i.test(value)
+            );
+          };
 
           // Field: name
           if (incoming.name !== null && incoming.name !== undefined && String(incoming.name).trim() !== '') {
             const val = String(incoming.name).trim();
-            audit.name = { status: 'UPDATED', oldVal: prev.name, newVal: val };
-            next.name = val;
+            if (!isLikelyBadName(val)) {
+              audit.name = { status: 'UPDATED', oldVal: prev.name, newVal: val };
+              next.name = val;
+            } else {
+              audit.name = { status: 'SKIPPED (looks like transcript)', oldVal: prev.name, newVal: incoming.name };
+            }
           } else {
             audit.name = { status: 'SKIPPED (null/empty)', oldVal: prev.name, newVal: prev.name };
           }
@@ -459,8 +478,12 @@ export const VoiceFormView: React.FC<VoiceFormViewProps> = ({
           // Field: nameIndic
           if (incoming.nameIndic !== null && incoming.nameIndic !== undefined && String(incoming.nameIndic).trim() !== '') {
             const val = String(incoming.nameIndic).trim();
-            audit.nameIndic = { status: 'UPDATED', oldVal: prev.nameIndic, newVal: val };
-            next.nameIndic = val;
+            if (!isLikelyBadName(val)) {
+              audit.nameIndic = { status: 'UPDATED', oldVal: prev.nameIndic, newVal: val };
+              next.nameIndic = val;
+            } else {
+              audit.nameIndic = { status: 'SKIPPED (looks like transcript)', oldVal: prev.nameIndic, newVal: incoming.nameIndic };
+            }
           } else {
             audit.nameIndic = { status: 'SKIPPED (null/empty)', oldVal: prev.nameIndic, newVal: prev.nameIndic };
           }

@@ -50,14 +50,18 @@ export const SmartFormEngine: React.FC<SmartFormEngineProps> = ({
   // Download JSON Payload
   const handleDownloadJSON = () => {
     const payload = {
-      portal: 'National Citizen Portal — SwarSetu Sovereign Gateway',
       formScheme: selectedFormName,
       extractedAt: new Date().toISOString(),
-      applicant: formData,
-      metadata: {
-        engine: 'IndicConformer-v2',
-        bhashiniCompliant: true,
-        verificationStatus: completedFields.length >= 5 ? 'High Confidence' : 'Pending Citizen Review'
+      verificationStatus: completedFields.length >= 5 ? 'High Confidence' : 'Pending Citizen Review',
+      applicant: {
+        fullName: formData.name || '',
+        fullNameIndic: formData.nameIndic || '',
+        age: formData.age ?? '',
+        gender: formData.gender || '',
+        mobileNumber: formData.phone || '',
+        email: formData.email || '',
+        residentAddress: formData.address || '',
+        occupation: formData.occupation || ''
       }
     };
 

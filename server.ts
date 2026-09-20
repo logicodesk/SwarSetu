@@ -153,6 +153,26 @@ function normalizeIndicTranscriptToEnglish(input: string): string {
   return output.replace(/\s+/g, ' ').trim();
 }
 
+function normalizeIndicNameToEnglish(input: string): string {
+  const cleanInput = input.replace(/\s+/g, ' ').trim();
+  const knownNames: Record<string, string> = {
+    'सृजन': 'Srijan',
+    'श्रीजन': 'Srijan',
+    'हर्ष': 'Harsh',
+    'स्वस्तिका': 'Swastika',
+    'राहुल शर्मा': 'Rahul Sharma',
+    'अमोल पाटील': 'Amol Patil',
+    'অনিরুদ্ধ সেন': 'Aniruddha Sen',
+    'கார்த்திக்': 'Karthik',
+    'வெங்கடேஷ்': 'Venkatesh',
+    'వెంకటేష్': 'Venkatesh',
+    'હિતેશ પટેલ': 'Hitesh Patel',
+    'ಸುರೇಶ್ ಗೌಡ': 'Suresh Gowda'
+  };
+
+  return knownNames[cleanInput] || cleanInput;
+}
+
 // ==========================================
 // 1. HEALTH CHECK ENDPOINT
 // ==========================================
@@ -411,9 +431,34 @@ app.post('/api/extract', async (req, res) => {
     const cleanupValue = (value: string) =>
       value
         .replace(/\b(?:and|aur|or|hai|hain|hu|hoon|houn|is|am|my|in|at|मैं|मे|मेरा|मेरी|है|हैं|हूँ|हूं|और|का|की|के|में|से|येथे|राहतो|राहते|থাকি|లో|में|માં|છે|ನಲ್ಲಿ|ದಲ್ಲಿ|ವಾಸಿಸುತ್ತಿದ್ದೇನೆ)\b/gi, ' ')
+        .replace(/^(?:है|हैं|हूँ|हूं|आहे|হলো|என்பது|అని|છે|ಅದು|hai|hain|is|am)\s+/i, '')
+        .replace(/\s+(?:है|हैं|हूँ|हूं|आहे|হলো|என்பது|అని|છે|ಅದು|hai|hain|is|am)$/i, '')
         .replace(/[.,।]+$/g, '')
         .replace(/\s+/g, ' ')
         .trim();
+    const extractExplicitName = (source: string): { name: string | null; nameIndic: string | null } => {
+      const stopWords = '(?:my|i|मैं|मेरी|मेरा|माझे|আমার|என்|எனக்கு|నా|મારી|ನನ್ನ|age|उम्र|वय|বয়স|வயது|వయస్సు|ઉંમર|ವಯಸ್ಸು|gender|जेंडर|लिंग|phone|mobile|number|मोबाइल|फोन|नंबर|address|पता|रहता|रहती|live|living|from|occupation|student|स्टूडेंट|और|and|$)';
+      const patterns = [
+        new RegExp(`(?:मेरा नाम|मेरी नाम|माझे नाव|আমার নাম|என் பெயர்|எனது பெயர்|నా పేరు|મારું નામ|મારુ નામ|ನನ್ನ ಹೆಸರು)\\s*(?:है|आहे|হলো|என்பது|అని|છે|ಅದು|is)?\\s*([^.,।!?\\d]+?)(?=\\s+${stopWords}|\\s+\\d|[.,।!?]|$)`, 'i'),
+        new RegExp(`(?:my name is|name is|name)\\s*([^.,।!?\\d]+?)(?=\\s+${stopWords}|\\s+\\d|[.,।!?]|$)`, 'i')
+      ];
+
+      for (const pattern of patterns) {
+        const match = source.match(pattern);
+        if (match) {
+          const value = cleanupValue(match[1]);
+          const tokenCount = value.split(/\s+/).filter(Boolean).length;
+          if (value && tokenCount <= 4 && !/(?:age|phone|mobile|number|gender|address|occupation|student|मैं|i|उम्र|मोबाइल|नंबर|जेंडर|पता)/i.test(value)) {
+            return {
+              name: value,
+              nameIndic: /^[\u0900-\u097F\u0980-\u09FF\u0A80-\u0AFF\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF\s]+$/.test(value) ? value : null
+            };
+          }
+        }
+      }
+
+      return { name: null, nameIndic: null };
+    };
     const ageWords: Record<string, number> = {
       'अठारह': 18, 'अट्ठारह': 18, 'atharah': 18, 'eighteen': 18,
       'उन्नीस': 19, 'nineteen': 19,
@@ -442,6 +487,12 @@ app.post('/api/extract', async (req, res) => {
     let email: string | null = null;
     let address: string | null = null;
     let occupation: string | null = null;
+
+    const explicitName = extractExplicitName(normalizedText);
+    if (explicitName.name) {
+      name = explicitName.name;
+      nameIndic = explicitName.nameIndic;
+    }
 
     // Extract 10-digit phone
     const spokenDigitAliases: Record<string, string> = {
@@ -571,7 +622,9 @@ app.post('/api/extract', async (req, res) => {
     }
 
     // Extract Names & Address based on typical vernacular patterns
-    if (normalizedText.includes('राहुल') || normalizedText.includes('Rahul')) {
+    if (name) {
+      // Explicit name phrase already captured above.
+    } else if (normalizedText.includes('राहुल') || normalizedText.includes('Rahul')) {
       name = 'Rahul Sharma';
       nameIndic = 'राहुल शर्मा';
       address = address || ((normalizedText.includes('मध्य प्रदेश') || normalizedText.includes('Madhya Pradesh')) ? 'Gwalior, Madhya Pradesh' : 'Gwalior');
@@ -627,6 +680,53 @@ app.post('/api/extract', async (req, res) => {
     return { name, nameIndic, age, gender, phone, email, address, occupation };
   };
 
+  const isLikelyBadName = (value: unknown): boolean => {
+    if (value === null || value === undefined) return false;
+    const candidate = String(value).trim();
+    if (!candidate) return false;
+    const wordCount = candidate.split(/\s+/).length;
+    const hasDigits = /\d/.test(candidate);
+    const hasSentencePunctuation = /[.,।!?]/.test(candidate);
+    const hasFieldWords = /(?:age|years?|phone|mobile|number|gender|address|occupation|student|farmer|engineer|उम्र|साल|मोबाइल|फोन|नंबर|जेंडर|लिंग|पता|रहता|रहती|स्टूडेंट|வயது|தொலைபேசி|மாணவன்|వయస్సు|ఫోన్|ವಯಸ್ಸು|દૂરવಾಣಿ)/i.test(candidate);
+    return candidate.length > 45 || wordCount > 5 || hasDigits || hasSentencePunctuation || hasFieldWords;
+  };
+
+  const isIndicOnlyName = (value: unknown): boolean => {
+    if (value === null || value === undefined) return false;
+    const candidate = String(value).trim();
+    return !!candidate && /^[\u0900-\u097F\u0980-\u09FF\u0A80-\u0AFF\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF\s]+$/.test(candidate);
+  };
+
+  const sanitizeExtraction = (data: ExtractedDataResult, sourceText: string): ExtractedDataResult => {
+    const heuristic = heuristicExtraction(sourceText);
+    const cleaned: ExtractedDataResult = { ...data };
+
+    if (heuristic.name && !isLikelyBadName(heuristic.name)) {
+      if (!cleaned.name || isLikelyBadName(cleaned.name) || isIndicOnlyName(cleaned.name)) {
+        cleaned.name = normalizeIndicNameToEnglish(heuristic.name);
+      }
+    } else if (isLikelyBadName(cleaned.name)) {
+      cleaned.name = null;
+    }
+
+    if (heuristic.nameIndic && !isLikelyBadName(heuristic.nameIndic)) {
+      cleaned.nameIndic = heuristic.nameIndic;
+    } else if (isLikelyBadName(cleaned.nameIndic)) {
+      cleaned.nameIndic = null;
+    }
+
+    if (cleaned.age === null || cleaned.age === undefined || Number.isNaN(Number(cleaned.age))) {
+      cleaned.age = heuristic.age;
+    }
+
+    if (!cleaned.gender) cleaned.gender = heuristic.gender;
+    if (!cleaned.phone) cleaned.phone = heuristic.phone;
+    if (!cleaned.address) cleaned.address = heuristic.address;
+    if (!cleaned.occupation) cleaned.occupation = heuristic.occupation;
+
+    return cleaned;
+  };
+
   // Try LLM Extraction via Gemini across model cascade
   const ai = getGemini();
   if (ai) {
@@ -647,7 +747,8 @@ CRITICAL RULES:
 6. If a name is present, provide "name" in Latin/English and "nameIndic" in native Indic script if applicable (or same as name if English).
 7. Extract occupation, address, and gender accurately from vernacular or English phrasing.
 8. Speakers may be non-fluent, hesitant, or code-mixed. Treat fillers, repeated words, and phonetic variants as noise while preserving the actual stated value. Examples: "जेंडर मेल है" means gender male, "जबलपुर का रहने वाला" means address/residence Jabalpur, and "मैं स्टूडेंट हूँ" means occupation Student.
-9. Output MUST BE strictly valid JSON matching this exact schema:
+9. The "name" field must contain ONLY the person's name, not the full transcript or a full sentence. If you cannot clearly isolate a person's name, set "name" and "nameIndic" to null.
+10. Output MUST BE strictly valid JSON matching this exact schema:
 
 {
   "name": string | null,
@@ -678,7 +779,7 @@ CRITICAL RULES:
         const rawText = response.text?.trim();
         if (rawText) {
           const cleanedText = rawText.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
-          const parsed = JSON.parse(cleanedText) as ExtractedDataResult;
+          const parsed = sanitizeExtraction(JSON.parse(cleanedText) as ExtractedDataResult, transcript);
 
           // Count detected fields
           const requiredKeys: (keyof ExtractedDataResult)[] = ['name', 'age', 'gender', 'phone', 'address'];
@@ -703,7 +804,7 @@ CRITICAL RULES:
   }
 
   // Heuristic execution fallback
-  const fallbackData = heuristicExtraction(transcript);
+  const fallbackData = sanitizeExtraction(heuristicExtraction(transcript), transcript);
   const requiredKeys: (keyof ExtractedDataResult)[] = ['name', 'age', 'gender', 'phone', 'address'];
   const missing = requiredKeys.filter((k) => !fallbackData[k]);
   const detectedCount = Object.values(fallbackData).filter((v) => v !== null && v !== undefined && v !== '').length;
