@@ -1,0 +1,7 @@
+{
+  "name": "SwarSetu",
+  "description": "AI-Powered Multilingual Voice-to-Form Platform for Indian Regional Languages.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
