@@ -158,12 +158,18 @@ export const VoiceAssistantPanel: React.FC<VoiceAssistantPanelProps> = ({
                 onClick={() => onLanguageChange(lang.code)}
                 className={`flex flex-col items-center justify-center p-2.5 rounded-xl border transition-all ${
                   isSelected
-                    ? 'bg-primary-container text-white border-primary shadow-sm ring-2 ring-primary/20'
+                    ? 'bg-primary text-white border-primary shadow-sm ring-2 ring-primary/20 scale-[1.02]'
                     : 'bg-surface-container-lowest text-on-surface border-outline-variant/30 hover:border-outline-variant hover:bg-surface-container'
                 }`}
               >
-                <span className="font-semibold text-sm">{lang.name}</span>
-                <span className={`text-xs ${isSelected ? 'text-primary-fixed' : 'text-on-surface-variant'}`}>
+                <span className={`font-semibold text-sm ${isSelected ? 'text-white' : 'text-on-surface'}`}>
+                  {lang.name}
+                </span>
+                <span
+                  className={`text-xs mt-0.5 font-medium ${
+                    isSelected ? 'text-white/90 drop-shadow-sm' : 'text-on-surface-variant'
+                  }`}
+                >
                   {lang.nativeName}
                 </span>
               </button>
