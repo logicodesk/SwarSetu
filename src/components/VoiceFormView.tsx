@@ -939,6 +939,7 @@ export const VoiceFormView: React.FC<VoiceFormViewProps> = ({
             selectedFormName={selectedFormName}
             onSelectFormName={setSelectedFormName}
             onReset={handleRestart}
+            selectedLanguage={language}
           />
         </div>
       </div>
