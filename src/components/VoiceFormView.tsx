@@ -61,6 +61,9 @@ export const VoiceFormView: React.FC<VoiceFormViewProps> = ({
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
   const recognitionRef = useRef<any>(null);
   const liveTranscriptRef = useRef<string>('');
   const requestIdRef = useRef<number>(0);
@@ -68,6 +71,12 @@ export const VoiceFormView: React.FC<VoiceFormViewProps> = ({
   const recordingStartedAtRef = useRef<number>(0);
   const simulateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const resetToastTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Live Audio Level & Speaking state for Waveform feedback
+  const [audioLevel, setAudioLevel] = useState<number>(0);
+  const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
+  const [frequencyData, setFrequencyData] = useState<number[]>([]);
+  const [micError, setMicError] = useState<string | null>(null);
 
   // Handle Language Change
   const handleLanguageChange = (newLang: IndicLanguageCode) => {
@@ -109,19 +118,36 @@ export const VoiceFormView: React.FC<VoiceFormViewProps> = ({
     );
   }, [transcript]);
 
-  // Start Actual Recording using Browser MediaRecorder & Web Speech API
+  // Cleanup audio context and animation loop
+  const stopAudioAnalyser = () => {
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+    if (audioContextRef.current) {
+      try {
+        audioContextRef.current.close();
+      } catch (e) {}
+      audioContextRef.current = null;
+      analyserRef.current = null;
+    }
+    setAudioLevel(0);
+    setIsSpeaking(false);
+    setFrequencyData([]);
+  };
+
+  // Start Actual Recording using Browser MediaRecorder, Web Audio Analyser & Web Speech API
   const handleStartRecording = async () => {
     liveTranscriptRef.current = '';
     audioChunksRef.current = [];
     isStoppingRecordingRef.current = false;
     recordingStartedAtRef.current = 0;
+    setMicError(null);
     setPipelineStatus('processing_audio');
 
-    // 1. Start MediaRecorder for audio blob capture. UI enters recording mode
-    // immediately, so slower microphone permission/device startup does not feel stuck.
     try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        throw new Error('MediaDevices API not supported in this browser.');
+        throw new Error('Microphone recording is not supported in this browser environment.');
       }
 
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -133,54 +159,97 @@ export const VoiceFormView: React.FC<VoiceFormViewProps> = ({
       });
       streamRef.current = stream;
 
-      let mimeType = 'audio/webm';
-      if (typeof MediaRecorder.isTypeSupported === 'function') {
-        if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
-          mimeType = 'audio/webm;codecs=opus';
-        } else if (MediaRecorder.isTypeSupported('audio/webm')) {
-          mimeType = 'audio/webm';
-        } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
-          mimeType = 'audio/mp4';
-        } else if (MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')) {
-          mimeType = 'audio/ogg;codecs=opus';
+      // Setup Live Web Audio API Analyser for instant waveform feedback
+      try {
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioCtx) {
+          const audioCtx = new AudioCtx();
+          if (audioCtx.state === 'suspended') {
+            await audioCtx.resume();
+          }
+          const analyser = audioCtx.createAnalyser();
+          analyser.fftSize = 64;
+          analyser.smoothingTimeConstant = 0.8;
+          const source = audioCtx.createMediaStreamSource(stream);
+          source.connect(analyser);
+
+          audioContextRef.current = audioCtx;
+          analyserRef.current = analyser;
+
+          const dataArray = new Uint8Array(analyser.frequencyBinCount);
+          const updateAudioMetrics = () => {
+            if (!analyserRef.current) return;
+            analyserRef.current.getByteFrequencyData(dataArray);
+            let sum = 0;
+            const normArray: number[] = [];
+            for (let i = 0; i < dataArray.length; i++) {
+              sum += dataArray[i];
+              normArray.push(dataArray[i] / 255);
+            }
+            const avg = sum / dataArray.length;
+            const level = Math.min(1, avg / 128);
+            setAudioLevel(level);
+            setIsSpeaking(level > 0.06);
+            setFrequencyData(normArray);
+
+            animationFrameRef.current = requestAnimationFrame(updateAudioMetrics);
+          };
+          updateAudioMetrics();
+        }
+      } catch (audioCtxErr) {
+        console.warn('[VoiceFormView] AudioContext visualizer note:', audioCtxErr);
+      }
+
+      // Determine best supported audio format
+      let mimeType = '';
+      if (typeof MediaRecorder !== 'undefined' && typeof MediaRecorder.isTypeSupported === 'function') {
+        const formats = [
+          'audio/webm;codecs=opus',
+          'audio/webm',
+          'audio/mp4',
+          'audio/ogg;codecs=opus',
+          'audio/wav'
+        ];
+        for (const fmt of formats) {
+          if (MediaRecorder.isTypeSupported(fmt)) {
+            mimeType = fmt;
+            break;
+          }
         }
       }
 
-      const mediaRecorder = new MediaRecorder(stream, { mimeType });
+      const recorderOptions: MediaRecorderOptions = mimeType ? { mimeType } : {};
+      const mediaRecorder = new MediaRecorder(stream, recorderOptions);
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
 
       mediaRecorder.ondataavailable = (e) => {
         if (e.data && e.data.size > 0) {
           audioChunksRef.current.push(e.data);
-          console.log(`[VoiceFormView] Audio chunk #${audioChunksRef.current.length} arrived: ${e.data.size} bytes`);
+          console.log(`[VoiceFormView] Audio chunk #${audioChunksRef.current.length} captured: ${e.data.size} bytes`);
         }
       };
 
       mediaRecorder.onstop = async () => {
         isStoppingRecordingRef.current = false;
+        stopAudioAnalyser();
+
         const chunkCount = audioChunksRef.current.length;
-        const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
+        const finalMime = mimeType || mediaRecorder.mimeType || 'audio/webm';
+        const audioBlob = new Blob(audioChunksRef.current, { type: finalMime });
 
         console.group(
           '%c[VoiceFormView] 🎙️ STEP 1: BLOB CREATION ON RECORDER STOP',
           'color: #3b82f6; font-weight: bold; background: #1e3a8a; padding: 2px 6px; border-radius: 4px;'
         );
         console.log('Timestamp:', new Date().toISOString());
-        console.log('MimeType:', mimeType);
+        console.log('MimeType:', finalMime);
         console.log('Total Chunks Captured:', chunkCount);
         console.log('Total Blob Size (bytes):', audioBlob.size);
-        console.log('Total Blob Size (KB):', (audioBlob.size / 1024).toFixed(2));
-        console.log('Blob Instance:', audioBlob);
         console.log('Live Speech recognition buffer text:', liveTranscriptRef.current || '(none)');
-        if (audioBlob.size === 0) {
-          console.warn('⚠️ WARNING: Recorded audio blob size is 0 bytes! Microphone stream may not have sent audio frames.');
-        } else {
-          console.log('✅ Audio Blob successfully created.');
-        }
         console.groupEnd();
 
-        // Stop all audio tracks
+        // Stop all audio hardware tracks
         if (streamRef.current) {
           streamRef.current.getTracks().forEach((track) => track.stop());
           streamRef.current = null;
@@ -190,13 +259,12 @@ export const VoiceFormView: React.FC<VoiceFormViewProps> = ({
         mediaRecorderRef.current = null;
       };
 
-      mediaRecorder.start(100); // flush frequently so the recorder is responsive on stop
+      mediaRecorder.start(100);
       recordingStartedAtRef.current = performance.now();
       setPipelineStatus('recording');
-      console.log('[VoiceFormView] MediaRecorder started with mimeType:', mimeType);
+      console.log('[VoiceFormView] MediaRecorder started actively with format:', mimeType || 'browser-default');
 
-      // 2. Start Browser Web Speech after microphone access is active. This avoids
-      // competing permission/device startup paths and still provides live text.
+      // Start Browser Web Speech with safe BCP-47 language tag
       const SpeechRecognition =
         (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
       if (SpeechRecognition) {
@@ -204,7 +272,8 @@ export const VoiceFormView: React.FC<VoiceFormViewProps> = ({
           const recognition = new SpeechRecognition();
           recognition.continuous = true;
           recognition.interimResults = true;
-          recognition.lang = language;
+          // 'auto' is not a valid BCP 47 tag for SpeechRecognition; fallback to 'hi-IN' or browser language
+          recognition.lang = language === 'auto' ? (navigator.language || 'hi-IN') : language;
           recognition.onresult = (event: any) => {
             let currentText = '';
             for (let i = 0; i < event.results.length; i++) {
@@ -214,7 +283,7 @@ export const VoiceFormView: React.FC<VoiceFormViewProps> = ({
             if (cleanText) {
               liveTranscriptRef.current = cleanText;
               setTranscript(cleanText);
-              console.log('[VoiceFormView] Live WebSpeech transcription interim:', cleanText);
+              console.log('[VoiceFormView] Live WebSpeech interim:', cleanText);
             }
           };
           recognition.onerror = (e: any) => {
@@ -227,12 +296,15 @@ export const VoiceFormView: React.FC<VoiceFormViewProps> = ({
         }
       }
     } catch (err: any) {
-      console.warn('Microphone access unavailable or denied:', err);
+      console.error('[VoiceFormView] Microphone error:', err);
+      stopAudioAnalyser();
       setPipelineStatus('idle');
+      const msg = err?.message || err?.name || 'Microphone access unavailable';
+      setMicError(`Microphone Error: ${msg}. Please check browser permissions.`);
     }
   };
 
-  // Stop Recording
+  // Stop Recording immediately
   const handleStopRecording = () => {
     console.log('[VoiceFormView] User triggered handleStopRecording.');
     if (isStoppingRecordingRef.current) {
@@ -241,6 +313,7 @@ export const VoiceFormView: React.FC<VoiceFormViewProps> = ({
     }
     isStoppingRecordingRef.current = true;
     setPipelineStatus('transcribing');
+    stopAudioAnalyser();
 
     const recognition = recognitionRef.current;
     if (recognition) {
@@ -252,24 +325,19 @@ export const VoiceFormView: React.FC<VoiceFormViewProps> = ({
 
     const recorder = mediaRecorderRef.current;
     if (recorder && recorder.state !== 'inactive') {
-      const elapsedMs = recordingStartedAtRef.current ? performance.now() - recordingStartedAtRef.current : 0;
-      const finalizeDelayMs = Math.max(320, 750 - elapsedMs);
-      window.setTimeout(() => {
-        if (!mediaRecorderRef.current || mediaRecorderRef.current.state === 'inactive') return;
-        try {
-          mediaRecorderRef.current.requestData();
-        } catch (e) {}
-        try {
-          mediaRecorderRef.current.stop();
-        } catch (e) {
-          isStoppingRecordingRef.current = false;
-          console.warn('MediaRecorder stop note:', e);
-        }
-      }, finalizeDelayMs);
+      try {
+        recorder.requestData();
+      } catch (e) {}
+      try {
+        recorder.stop();
+      } catch (e) {
+        isStoppingRecordingRef.current = false;
+        console.warn('MediaRecorder stop note:', e);
+      }
     } else {
       // If mic was not active or already stopped
       isStoppingRecordingRef.current = false;
-      const textToProcess = transcript.trim();
+      const textToProcess = transcript.trim() || liveTranscriptRef.current.trim();
       if (textToProcess) {
         console.log('[VoiceFormView] Routing directly to extraction with:', textToProcess);
         processTranscript(textToProcess);
@@ -815,6 +883,22 @@ export const VoiceFormView: React.FC<VoiceFormViewProps> = ({
         </div>
       </div>
 
+      {/* Microphone Error Alert Banner if permission or device blocked */}
+      {micError && (
+        <div className="mb-6 p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-red-700 dark:text-red-300 flex items-center justify-between text-xs animate-fadeIn">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
+            <span className="font-semibold">{micError}</span>
+          </div>
+          <button
+            onClick={() => setMicError(null)}
+            className="px-2.5 py-1 rounded-lg bg-red-500/20 hover:bg-red-500/30 text-xs font-mono font-bold"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {/* Main Split-Screen Workspace (Image 3 exact layout) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Left Column: Voice Assistant Panel */}
@@ -838,6 +922,9 @@ export const VoiceFormView: React.FC<VoiceFormViewProps> = ({
             }}
             onSimulateVoiceSample={() => handleSimulateVoiceSample(language, true)}
             latencyMs={latencyMs}
+            audioLevel={audioLevel}
+            isSpeaking={isSpeaking}
+            frequencyData={frequencyData}
           />
         </div>
 

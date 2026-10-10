@@ -65,41 +65,31 @@ export const VoiceAssistantPanel: React.FC<VoiceAssistantPanelProps> = ({
     setEditableTranscript(transcript);
   }, [transcript]);
 
-  // Handle Recording Timer & 30-second cap
+  // Handle Recording Timer & 30-second cap cleanly without re-triggering on parent renders
   useEffect(() => {
+    let intervalId: any = null;
     if (status === 'recording') {
       setRecordDuration(0);
-      timerRef.current = setInterval(() => {
-        setRecordDuration((prev) => {
-          if (prev >= 30) {
-            // 30 seconds hard cap requirement
-            clearInterval(timerRef.current);
-            onStopRecording();
-            return 30;
-          }
-          return prev + 1;
-        });
+      intervalId = setInterval(() => {
+        setRecordDuration((prev) => prev + 1);
       }, 1000);
     } else {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-      }
-      // When status returns to idle, reset timer and editing state back to 0
-      if (status === 'idle') {
-        setRecordDuration(0);
-        setIsEditingTranscript(false);
-      }
+      setRecordDuration(0);
     }
 
     return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
+      if (intervalId) clearInterval(intervalId);
     };
-  }, [status, onStopRecording]);
+  }, [status]);
+
+  // Auto-stop when reaching 30s limit
+  useEffect(() => {
+    if (status === 'recording' && recordDuration >= 30) {
+      onStopRecording();
+    }
+  }, [recordDuration, status, onStopRecording]);
 
   const handleResetClick = () => {
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-    }
     setRecordDuration(0);
     setIsEditingTranscript(false);
     onRestart();
@@ -113,20 +103,16 @@ export const VoiceAssistantPanel: React.FC<VoiceAssistantPanelProps> = ({
 
   const handleMicClick = () => {
     if (simMode === 'denied') {
-      alert('Simulation: Microphone access was denied by user/browser permissions.');
+      alert('Microphone simulation mode is set to "Mic Denied". Switch to "Normal" to use your real microphone.');
       return;
     }
     if (simMode === 'offline') {
-      alert('Simulation: Device is currently in Offline mode. Sovereign local cache will be used.');
-    }
-
-    if (status === 'processing_audio' || status === 'transcribing' || status === 'extracting') {
-      return;
+      alert('Device is in Offline simulation mode. Sovereign local extraction will be used.');
     }
 
     if (status === 'recording') {
       onStopRecording();
-    } else {
+    } else if (status === 'idle' || status === 'form_ready' || status === 'success') {
       onStartRecording();
     }
   };
