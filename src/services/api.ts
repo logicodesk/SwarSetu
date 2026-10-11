@@ -63,24 +63,15 @@ export async function transcribeAudio(
     console.log('[API Service] transcribeAudio -> Server response:', data);
     return data;
   } catch (err: any) {
-    console.warn('[API Service] Transcription API error, using intelligent client fallback:', err);
-    // If backend is unreachable or network failed, provide structured fallback
+    console.warn('[API Service] Transcription API error:', err);
     return {
-      success: true,
-      transcript:
-        language === 'en-IN'
-          ? 'My name is Priya Mehta. I am female. My age is 26 years old. I reside in Bengaluru, Karnataka. My phone number is 9880123456.'
-          : language === 'mr-IN'
-          ? 'माझे नाव अमोल पाटील आहे. माझे वय ब्याचाळीस वर्षे आहे. मी पुणे महाराष्ट्र येथे राहतो. माझा मोबाईल नंबर 9822334455 आहे.'
-          : language === 'bn-IN'
-          ? 'আমার নাম অনিরুদ্ধ সেন। আমার বয়স ঊনত্রিশ বছর। আমি কলকাতা পশ্চিমবঙ্গে থাকি। আমার ফোন নম্বর 9830112233।'
-          : language === 'ta-IN'
-          ? 'என் பெயர் கார்த்திக். எனக்கு வயது முப்பத்து நான்கு. நான் சென்னை தமிழ்நாட்டில் வசிக்கிறேன். என் அலைபேசி எண் 9444123456.'
-          : 'मेरा नाम स्वस्तिका चौबे है। मेरी उम्र तेईस साल है। मैं ग्वालियर मध्य प्रदेश में रहती हूँ। मेरा फोन नंबर 9876543210 है।',
+      success: false,
+      transcript: '',
       language,
       latencyMs: 142,
-      clarityScore: 0.982,
-      isDemo: true
+      clarityScore: 0,
+      isDemo: false,
+      error: err?.message || 'Transcription connection error. Please try speaking again.'
     };
   }
 }

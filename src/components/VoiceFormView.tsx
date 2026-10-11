@@ -154,7 +154,9 @@ export const VoiceFormView: React.FC<VoiceFormViewProps> = ({
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
-          autoGainControl: true
+          autoGainControl: true,
+          channelCount: 1,
+          sampleRate: 44100
         }
       });
       streamRef.current = stream;
@@ -259,7 +261,7 @@ export const VoiceFormView: React.FC<VoiceFormViewProps> = ({
         mediaRecorderRef.current = null;
       };
 
-      mediaRecorder.start(100);
+      mediaRecorder.start(250);
       recordingStartedAtRef.current = performance.now();
       setPipelineStatus('recording');
       console.log('[VoiceFormView] MediaRecorder started actively with format:', mimeType || 'browser-default');
@@ -288,6 +290,14 @@ export const VoiceFormView: React.FC<VoiceFormViewProps> = ({
           };
           recognition.onerror = (e: any) => {
             console.warn('[VoiceFormView] SpeechRecognition event note:', e?.error);
+          };
+          recognition.onend = () => {
+            // Auto-restart while user is still actively recording
+            if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+              try {
+                recognition.start();
+              } catch (e) {}
+            }
           };
           recognition.start();
           recognitionRef.current = recognition;
@@ -395,20 +405,13 @@ export const VoiceFormView: React.FC<VoiceFormViewProps> = ({
           isDemo: transResult.isDemo
         });
 
-        if (transResult.transcript && transResult.transcript.trim()) {
-          // If we have a genuine neural ASR transcription or no live transcript, adopt it
-          if (!transResult.isDemo || !finalTranscript) {
-            console.log(
-              `Adopting backend transcription output: was="${finalTranscript}", now="${transResult.transcript.trim()}"`
-            );
-            finalTranscript = transResult.transcript.trim();
-          } else {
-            console.log(
-              `Preserving live client recognition ("${finalTranscript}") over demo fallback.`
-            );
-          }
-        } else {
-          console.warn('Backend returned empty transcript in payload.');
+        if (transResult.transcript && transResult.transcript.trim() && !transResult.isDemo) {
+          console.log(
+            `✅ Adopting neural ASR transcription output: was="${finalTranscript}", now="${transResult.transcript.trim()}"`
+          );
+          finalTranscript = transResult.transcript.trim();
+        } else if (transResult.error) {
+          console.warn('Backend returned transcription error note:', transResult.error);
         }
 
         setLatencyMs(transResult.latencyMs || 142);
@@ -431,11 +434,14 @@ export const VoiceFormView: React.FC<VoiceFormViewProps> = ({
     if (!finalTranscript) {
       finalTranscript = transcript.trim();
       if (!finalTranscript) {
-        console.warn('No spoken audio transcript resolved. Leaving form unchanged instead of using demo sample data.');
+        console.warn('No spoken audio transcript resolved.');
+        setMicError('No clear speech was recognized. Please speak closer to your microphone and try again.');
         setPipelineStatus('form_ready');
         console.groupEnd();
         return;
       }
+    } else {
+      setMicError(null);
     }
 
     console.log(`✅ Final resolved transcript for Step 3: "${finalTranscript}"`);

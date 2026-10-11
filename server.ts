@@ -20,12 +20,12 @@ const upload = multer({
   limits: { fileSize: 25 * 1024 * 1024 } // 25MB max
 });
 
-// Model fallback chains for high availability
-const GEMINI_TEXT_MODELS = ['gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-flash-latest'];
-const GEMINI_AUDIO_MODELS = ['gemini-3.5-transcribe', 'gemini-3.8-flash', 'gemini-flash-latest'];
+// Model fallback chains for high availability (tested and verified models first)
+const GEMINI_TEXT_MODELS = ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.8-flash'];
+const GEMINI_AUDIO_MODELS = ['gemini-flash-latest', 'gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-3.5-transcribe'];
 const SARVAM_TIMEOUT_MS = 4500;
-const GEMINI_AUDIO_TIMEOUT_MS = 7000;
-const GEMINI_TEXT_TIMEOUT_MS = 5500;
+const GEMINI_AUDIO_TIMEOUT_MS = 9000;
+const GEMINI_TEXT_TIMEOUT_MS = 6000;
 
 let sarvamAuthDisabledUntil = 0; // timestamp (ms) – retry Sarvam after this time
 const SARVAM_AUTH_RETRY_MS = 60_000; // retry Sarvam 60s after an auth failure
@@ -290,7 +290,7 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
 
   // If no audio file or audio is practically empty
   if (!file || file.buffer.length < 300) {
-    if (process.env.DEMO_MODE === 'true' || !process.env.SARVAM_API_KEY) {
+    if (process.env.DEMO_MODE === 'true') {
       const selectedTranscript = defaultTranscripts[language] || defaultTranscripts['hi-IN'];
       return res.json({
         success: true,
@@ -302,13 +302,13 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
       });
     }
     return res.json({
-      success: true,
+      success: false,
       transcript: '',
       language,
       latencyMs: Date.now() - startTime,
       clarityScore: 0,
       isDemo: false,
-      error: 'Audio stream was empty or silent. Please speak into the microphone.'
+      error: 'Audio was too short or silent. Please hold the microphone and speak clearly.'
     });
   }
 
@@ -380,7 +380,19 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
 
     for (const modelName of GEMINI_AUDIO_MODELS) {
       try {
-        console.log(`[ASR Cascade] Attempting transcription via Gemini model: ${modelName}`);
+        const languageHintMap: Record<string, string> = {
+          'hi-IN': 'Hindi (spoken in Devanagari/Roman). Speaker may say: mera naam Rahul hai, meri umar bais saal hai, main Gwalior mein rehta hoon',
+          'mr-IN': 'Marathi (spoken in Devanagari). Speaker may say: majhe naav Amol aahe, maze vay byachaalis aahe, mi Pune mhyeyeto',
+          'bn-IN': 'Bengali (spoken in Bengali script). Speaker may say: aamar naam Aniruddha, aamar boyos unastris',
+          'ta-IN': 'Tamil (spoken in Tamil script). Speaker may say: en peyar Karthik, enakku vayadu muppathu naangu',
+          'te-IN': 'Telugu (spoken in Telugu script). Speaker may say: na peru Venkatesh, na vayassu muppai rendu',
+          'gu-IN': 'Gujarati (spoken in Gujarati script). Speaker may say: marum naam Hitesh chhe, mari ummar pachtris chhe',
+          'kn-IN': 'Kannada (spoken in Kannada script). Speaker may say: nanna hesaru Suresh, nanna vayassu muppattu',
+          'en-IN': 'Indian English or Hinglish. Speaker may say: my name is Priya, I am 26 years old, I live in Bengaluru',
+          'auto': 'Any Indian language: Hindi, Marathi, Bengali, Tamil, Telugu, Gujarati, Kannada, or Indian English'
+        };
+        const langDesc = languageHintMap[language] || languageHintMap['auto'];
+        console.log(`[ASR Cascade] Attempting transcription via Gemini model: ${modelName}, lang: ${language}`);
         const response = await withTimeout(
           ai.models.generateContent({
             model: modelName,
@@ -395,14 +407,23 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
                     }
                   },
                   {
-                    text: `Listen to this audio recording very carefully.
-The speaker is providing citizen or personal identity details in ANY Indian language, Indian English, or code-mixed vernacular (such as Hindi, English, Hinglish, Marathi, Bengali, Tamil, Telugu, Gujarati, Kannada, etc.).
-Transcribe verbatim what the speaker said.
-- Output the transcription in the original script spoken or Latin for English/Hinglish.
-- Capture all names, numbers, ages, cities, and occupations accurately.
-- Do NOT translate.
-- Do NOT add markdown, greetings, or conversational remarks.
-- Output ONLY the verbatim raw spoken words. If no speech or only background silence, output nothing.`
+                    text: `You are a precise speech-to-text engine for Indian government citizen services.
+
+Listen to this audio carefully.
+
+EXPECTED LANGUAGE: ${langDesc}
+
+TRANSCRIPTION RULES:
+1. Transcribe EXACTLY what the speaker said, word for word, in the ORIGINAL language and script.
+2. Do NOT translate to another language. Keep the original script.
+3. Capture Indian personal names exactly as spoken (Rahul Sharma, Priya Mehta, Karthik, Venkatesh, etc).
+4. Capture 10-digit Indian phone numbers exactly as spoken in sequence.
+5. Capture ages accurately including spoken word-numbers (bais=22, teis=23, chaubis=24, muppai rendu=32, muppathu naangu=34).
+6. Capture city and state names accurately (Gwalior, Jabalpur, Chennai, Vijayawada, Pune, Mumbai, Kolkata, Bengaluru, Ahmedabad, Mysuru).
+7. Do NOT add markdown, greetings, or any extra text not spoken.
+8. If audio contains ONLY background noise or silence with no human speech, output exactly: NO_SPEECH_DETECTED
+
+Output ONLY the verbatim transcription of what was spoken.`
                   }
                 ]
               }
@@ -413,9 +434,9 @@ Transcribe verbatim what the speaker said.
         );
 
         const transcript = response.text?.trim();
-        if (transcript && transcript.length > 0 && !transcript.toUpperCase().includes('NO_SPEECH')) {
+        if (transcript && transcript.length > 0 && !transcript.toUpperCase().includes('NO_SPEECH_DETECTED') && !transcript.toUpperCase().includes('NO SPEECH')) {
           const latency = Date.now() - startTime;
-          console.log(`[ASR Cascade] Gemini ${modelName} transcribed:`, transcript);
+          console.log(`[ASR Cascade] Gemini ${modelName} success (lang=${language}):`, transcript);
           return res.json({
             success: true,
             transcript,
