@@ -654,22 +654,39 @@ app.post('/api/extract', async (req, res) => {
     } else if (searchableText.match(/(?:दुकानदार|व्यापारी|business|बिजनेस|shopkeeper|merchant|trader|வியாபாரி)/i)) {
       occupation = 'Business Owner';
     } else {
-      const occupationMatch = searchableText.match(/(?:मैं|मे|i am|i'm|occupation|काम|व्यवसाय|பேசா|பணி|பணி|பேஷா|பணியாளர்|பணி|पेशा)\s+(?:एक\s+)?([A-Za-z\u0900-\u097F\u0980-\u09FF\u0A80-\u0AFF\u0B80-\u0BFF\u0C00-\u0C7F\s/.-]{2,40}?)(?=[.,।]|$|(?:\s+(?:और|and|மற்றும்|மொபைல்|மொபைல்|மேரா|மेरा|मेरी|मोबाइल|फोन|நம்பர்|number|नंबर|ரஹனே|रहने|रहता|रहती|address)))/i);
-      if (occupationMatch) {
-        const value = cleanupValue(occupationMatch[1]);
-        if (value && !/(?:नाम|उम्र|age|gender|जेंडर|phone|mobile|number)/i.test(value)) {
-          occupation = value;
+      const directOccMatch = searchableText.match(/(?:ऑक्यूपेशन|occupation|व्यवसाय|काम|पेशा|job|work)\s*(?:हे|है|is|:)?\s*([A-Za-z\u0900-\u097F]{2,30})/i);
+      if (directOccMatch) {
+        const rawOcc = directOccMatch[1].trim();
+        if (rawOcc && !/(?:नाम|उम्र|age|gender|जेंडर|phone|mobile)/i.test(rawOcc)) {
+          occupation = rawOcc.charAt(0).toUpperCase() + rawOcc.slice(1);
+        }
+      } else {
+        const occupationMatch = searchableText.match(/(?:मैं|मे|i am|i'm|occupation|ऑक्यूपेशन|काम|व्यवसाय|பேசா|பணி|பணி|பேஷா|பணியாளர்|பணி|पेशा)\s+(?:एक\s+)?([A-Za-z\u0900-\u097F\u0980-\u09FF\u0A80-\u0AFF\u0B80-\u0BFF\u0C00-\u0C7F\s/.-]{2,40}?)(?=[.,।]|$|(?:\s+(?:और|and|மற்றும்|மொபைல்|மொபைல்|மேரா|மेरा|मेरी|मोबाइल|फोन|நம்பர்|number|नंबर|ரஹனே|रहने|रहता|रहती|address)))/i);
+        if (occupationMatch) {
+          const value = cleanupValue(occupationMatch[1]);
+          if (value && !/(?:नाम|उम्र|age|gender|जेंडर|phone|mobile|number)/i.test(value)) {
+            occupation = value;
+          }
         }
       }
     }
 
     // Extract address/city even when the speaker says it imperfectly.
+    const directResidence = searchableText.match(/([A-Za-z\u0900-\u097F\s]{2,25}?)\s+(?:का|की|के)\s*(?:रहने वाला|रहने वाली)/i);
+    if (directResidence) {
+      const candidate = directResidence[1].replace(/^(?:और|मैं|me|and)\s+/i, '').trim();
+      if (candidate && !/(?:नाम|उम्र|age|gender|जेंडर|phone|mobile|number)/i.test(candidate)) {
+        address = candidate;
+      }
+    }
+
     const addressPatterns = [
       /(?:मैं|मे|i|मी|আমি|నేను|હું|ನಾನು)\s+([^.,।]+?)\s+(?:का|की|के)?\s*(?:रहने वाला|रहने वाली|resident|live|living|from|address)\b/i,
-      /(?:address|पता|निवास|शहर|city)\s*(?:है|is|:)?\s*([^.,।]+?)(?=$|(?:\s+(?:और|and|मेरा|मेरी|mobile|phone|number|occupation|gender)))/i,
+      /(?:address|पता|निवास स्थान|निवास|शहर|city)\s*(?:हे|है|is|:)?\s*([^.,।]+?)(?=$|(?:\s+(?:और|and|मेरा|मेरी|mobile|phone|number|occupation|gender)))/i,
       /(?:रहने वाला हूँ|रहने वाली हूँ|रहता हूँ|रहती हूँ|live in|living in|from)\s+([^.,।]+?)(?=$|(?:\s+(?:और|and|मेरा|मेरी|mobile|phone|number|occupation|gender)))/i
     ];
     for (const pattern of addressPatterns) {
+      if (address) break;
       const match = searchableText.match(pattern);
       if (match) {
         const value = cleanupValue(match[1]);

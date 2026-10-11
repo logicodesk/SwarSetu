@@ -123,6 +123,103 @@ function clientHeuristicExtract(text: string): ExtractedFormData {
     email = emailMatch[0];
   }
 
+  // Address & Resident City/State extraction
+  const cityStateMap: Record<string, string> = {
+    'जबलपुर': 'Jabalpur, Madhya Pradesh',
+    'jabalpur': 'Jabalpur, Madhya Pradesh',
+    'ग्वालियर': 'Gwalior, Madhya Pradesh',
+    'gwalior': 'Gwalior, Madhya Pradesh',
+    'भोपाल': 'Bhopal, Madhya Pradesh',
+    'bhopal': 'Bhopal, Madhya Pradesh',
+    'इंदौर': 'Indore, Madhya Pradesh',
+    'indore': 'Indore, Madhya Pradesh',
+    'पुणे': 'Pune, Maharashtra',
+    'pune': 'Pune, Maharashtra',
+    'मुंबई': 'Mumbai, Maharashtra',
+    'mumbai': 'Mumbai, Maharashtra',
+    'कोलकाता': 'Kolkata, West Bengal',
+    'kolkata': 'Kolkata, West Bengal',
+    'चेन्नई': 'Chennai, Tamil Nadu',
+    'chennai': 'Chennai, Tamil Nadu',
+    'बेंगलुरु': 'Bengaluru, Karnataka',
+    'bengaluru': 'Bengaluru, Karnataka',
+    'bangalore': 'Bengaluru, Karnataka',
+    'दिल्ली': 'Delhi, NCR',
+    'delhi': 'Delhi, NCR',
+    'जयपुर': 'Jaipur, Rajasthan',
+    'jaipur': 'Jaipur, Rajasthan',
+    'कोटा': 'Kota, Rajasthan',
+    'kota': 'Kota, Rajasthan',
+    'लखनऊ': 'Lucknow, Uttar Pradesh',
+    'lucknow': 'Lucknow, Uttar Pradesh',
+    'कानपुर': 'Kanpur, Uttar Pradesh',
+    'kanpur': 'Kanpur, Uttar Pradesh',
+    'पटना': 'Patna, Bihar',
+    'patna': 'Patna, Bihar',
+    'अहमदाबाद': 'Ahmedabad, Gujarat',
+    'ahmedabad': 'Ahmedabad, Gujarat',
+    'मैसूर': 'Mysuru, Karnataka',
+    'mysuru': 'Mysuru, Karnataka',
+    'विजयवाड़ा': 'Vijayawada, Andhra Pradesh',
+    'vijayawada': 'Vijayawada, Andhra Pradesh',
+    'वाराणसी': 'Varanasi, Uttar Pradesh',
+    'varanasi': 'Varanasi, Uttar Pradesh',
+    'आगरा': 'Agra, Uttar Pradesh',
+    'agra': 'Agra, Uttar Pradesh',
+    'सूरत': 'Surat, Gujarat',
+    'surat': 'Surat, Gujarat',
+    'नागपुर': 'Nagpur, Maharashtra',
+    'nagpur': 'Nagpur, Maharashtra'
+  };
+
+  const lowerText = text.toLowerCase();
+  for (const [cityName, stateFormatted] of Object.entries(cityStateMap)) {
+    if (lowerText.includes(cityName.toLowerCase())) {
+      address = stateFormatted;
+      break;
+    }
+  }
+
+  if (!address) {
+    const directResidenceMatch =
+      text.match(/([A-Za-z\u0900-\u097F\s]{2,25}?)\s+(?:का|की|के)\s*(?:रहने वाला|रहने वाली)/i) ||
+      text.match(/(?:रहने वाला|रहने वाली|रहता हूँ|रहती हूँ|रहता हूं|रहती हूं|निवास|रहते|live in|living in|from)\s+(?:हूँ|हूं)?\s*(?:का|की|के)?\s*([A-Za-z\u0900-\u097F\s]{2,30}?)(?=$|(?:\s+(?:और|मेरा|मेरी|ऑक्यूपेशन|occupation|पेशा)))/i) ||
+      text.match(/(?:address|पता|निवास स्थान|शहर|city)\s*(?:हे|है|is|:)?\s*([A-Za-z\u0900-\u097F\s]{2,30}?)(?=$|(?:\s+(?:और|मेरा|मेरी)))/i);
+    if (directResidenceMatch) {
+      const candidate = directResidenceMatch[1].replace(/^(?:और|मैं|me|and)\s+/i, '').trim();
+      if (candidate && !/(?:नाम|उम्र|age|gender|जेंडर|phone|mobile|number)/i.test(candidate)) {
+        address = candidate;
+      }
+    }
+  }
+
+  // Occupation extraction
+  if (/(?:स्टूडेंट|छात्र|विद्यार्थी|student|padhai|पढ़ाई)/i.test(text)) {
+    occupation = 'Student';
+  } else if (/(?:किसान|शेतकरी|farmer|खेती|कृषक)/i.test(text)) {
+    occupation = 'Farmer';
+  } else if (/(?:इंजीनियर|engineer)/i.test(text)) {
+    occupation = 'Engineer';
+  } else if (/(?:दुकानदार|व्यापारी|business|बिजनेस|व्यापार|दुकान)/i.test(text)) {
+    occupation = 'Business Owner';
+  } else if (/(?:टीचर|शिक्षक|teacher)/i.test(text)) {
+    occupation = 'Teacher';
+  } else if (/(?:डॉक्टर|चिकित्सक|doctor)/i.test(text)) {
+    occupation = 'Doctor';
+  } else if (/(?:वकील|advocate|lawyer)/i.test(text)) {
+    occupation = 'Lawyer';
+  } else if (/(?:हाउसवाइफ|गृहिणी|homemaker)/i.test(text)) {
+    occupation = 'Homemaker';
+  } else {
+    const occDirectMatch = text.match(/(?:ऑक्यूपेशन|occupation|व्यवसाय|काम|पेशा|job|work)\s*(?:हे|है|is|:)?\s*([A-Za-z\u0900-\u097F]{2,30})/i);
+    if (occDirectMatch) {
+      const rawOcc = occDirectMatch[1].trim();
+      if (rawOcc && !/(?:नाम|उम्र|age|gender|जेंडर|phone|mobile)/i.test(rawOcc)) {
+        occupation = rawOcc.charAt(0).toUpperCase() + rawOcc.slice(1);
+      }
+    }
+  }
+
   return { name, nameIndic, age, gender, phone, email, address, occupation };
 }
 
